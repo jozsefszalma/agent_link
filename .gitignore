@@ -1,0 +1,8 @@
+.venv
+.env
+*.pyc
+*.txt
+*.gz
+*.whl
+PKG-INFO
+.pytest_cache
