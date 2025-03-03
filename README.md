@@ -1,12 +1,12 @@
 # agent_link
 a Python Library for Distributed AI Agent Communications   
 
-![Talk to my Agent meme](images/arnold.jpg)
+![Talk to my Agent meme](https://github.com/jozsefszalma/agent_link/blob/main/images/arnold.jpg?raw=true)
 
 
 ## Origin Story
 The inspiration for this project came from the extremely cool [gibberlink](https://github.com/PennyroyalTea/gibberlink) demo and originally started as a joke:
-![Skypenet joke on Linkedin](images/skypenet.png)
+![Skypenet joke on Linkedin](https://github.com/jozsefszalma/agent_link/blob/main/images/skypenet.png?raw=true)
 
 Since I don't want to anger the nice folks in Redmond, I decided NOT to call it Skypenet in the end...
 
