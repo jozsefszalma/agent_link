@@ -49,7 +49,7 @@ Without such a common infrastructure, agent networks would remain siloed within 
 ## Installation & Setup
 ### 1.  Install the Package
 ```bash
-pip install agent_link 
+pip install ai-agent-link
 ```
 ### 2. Set Up MQTT Broker Access
 Register for an account at an MQTT broker service. [HiveMQ Cloud](https://hivemq.cloud) offers a free tier sufficient for testing.
