@@ -18,6 +18,7 @@ import signal
 import time
 import logging
 from threading import Event
+from dotenv import load_dotenv
 
 from agent_link import ConnectionConfig, AgentNode, Audience, Message
 from agent_link.config import AuthMethod
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Exit flag for clean shutdown
 exit_flag = Event()
+
+load_dotenv()
 
 def main():
     # -------------------------------------------------------------------

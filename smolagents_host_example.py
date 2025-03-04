@@ -17,6 +17,7 @@ import logging
 import signal
 import time
 from typing import Optional
+from dotenv import load_dotenv
 
 # smolagents / agent_link imports
 from smolagents.agents import CodeAgent
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 # -------------------------------------------------------------------
 # 1) Connection setup using environment variables
 # -------------------------------------------------------------------
+load_dotenv()
+
 config = ConnectionConfig(
     broker=os.getenv("MQTT_BROKER"),
     port=int(os.getenv("MQTT_PORT", "1883")),
