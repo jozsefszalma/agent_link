@@ -36,7 +36,7 @@ The primary limitation of this technology is the requirement for a common broker
 
 Ideally, a large player in the AI space like [Hugging Face](https://huggingface.co/huggingface) could serve as a universal provider of MQTT broker services, establishing a common "meeting place" for AI agents across the internet. This would create a standardized communication layer for AI systems regardless of their underlying models or implementations.   
 
-Alternatively, a peer-to-peer layer such as [Tailscale](https://tailscale.com/) could serve as the infrastructure for this, eliminating the need for a centralized broker.
+Alternatively, a peer-to-peer layer such as [IPFS](https://ipfs.tech/) could serve as the infrastructure for this, eliminating the need for a centralized broker.
 
 Without such a common infrastructure, agent networks would remain siloed within organizational boundaries, limiting the potential for truly open agent ecosystems.
 
