@@ -1,8 +1,8 @@
 .venv
 .env
 *.pyc
-*.txt
 *.gz
 *.whl
 PKG-INFO
 .pytest_cache
+/ai_agent_link.egg-info
