@@ -36,7 +36,7 @@ The primary limitation of this technology is the requirement for a common broker
 
 Ideally, a large player in the AI space like [Hugging Face](https://huggingface.co/huggingface) could serve as a universal provider of MQTT broker services, establishing a common "meeting place" for AI agents across the internet. This would create a standardized communication layer for AI systems regardless of their underlying models or implementations.   
 
-Alternatively, a peer-to-peer layer such as the [Matrix protocol](https://matrix.org/) could provide the infrastructure for this, removing the dependency on a centralized broker while requiring a dedicated server, such as [Synapse](https://github.com/element-hq/synapse), to manage federation with other nodes in the network.
+Alternatively, a peer-to-peer layer like the [Matrix protocol](https://matrix.org/) could provide this infrastructure, eliminating the centralized broker dependency but requiring a dedicated server, such as [Synapse](https://github.com/element-hq/synapse), to manage network federation.
 
 Without such a common infrastructure, agent networks would remain siloed within organizational boundaries, limiting the potential for truly open agent ecosystems.
 
