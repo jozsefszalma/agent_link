@@ -392,6 +392,25 @@ class TestAgentNode:
         assert payload["params"]["message"]["metadata"]["sender_id"] == "agent-sender"
         assert payload["params"]["message"]["parts"][0]["text"] == "Hello via A2A"
 
+    def test_send_a2a_request_adds_sender_metadata_by_default(self, test_config, mock_agent_link):
+        """A2A requests include sender metadata when none is provided."""
+        node = AgentNode(
+            config=test_config,
+            room_id="a2a-room",
+            agent_id="agent-sender",
+        )
+        node._joined = True
+
+        node.send_a2a_request(
+            text="Hello via A2A",
+            audience=Audience.DIRECT,
+            recipient_id="agent-recipient",
+        )
+
+        payload = mock_agent_link.publish.call_args[1]["payload"]
+        metadata = payload["params"]["message"]["metadata"]
+        assert metadata["senderId"] == "agent-sender"
+
     def test_handle_a2a_message(self, test_config):
         """Ensure incoming A2A payloads are parsed and passed to handlers."""
         with patch('agent_link.node.AgentLink'):
@@ -413,11 +432,10 @@ class TestAgentNode:
             assert message.audience == Audience.DIRECT
 
     def test_handler_returning_a2a_message(self, test_config):
-        """If a handler returns an A2A message, send_a2a_request is used."""
+        """If a handler returns an A2A message, respond with a JSON-RPC result."""
         with patch('agent_link.node.AgentLink'):
             node = AgentNode(config=test_config, agent_id="agent")
             outgoing = create_text_message("Pong", role="agent")
-            node.send_a2a_request = MagicMock()
 
             handler = MagicMock(return_value=outgoing)
             node.add_message_handler(handler)
@@ -428,8 +446,11 @@ class TestAgentNode:
             topic = f"rooms/{node.room_id}/direct/{node.agent_id}"
             node._handle_message(topic, envelope.to_dict())
 
-            node.send_a2a_request.assert_called_once()
-            kwargs = node.send_a2a_request.call_args.kwargs
-            assert kwargs["message"] is outgoing
-            assert kwargs["recipient_id"] == "peer"
-            assert kwargs["audience"] == Audience.DIRECT
+            node.client.publish.assert_called_once()
+            publish_kwargs = node.client.publish.call_args.kwargs
+            assert publish_kwargs["topic"] == f"rooms/{node.room_id}/direct/peer"
+            payload = publish_kwargs["payload"]
+            assert payload["jsonrpc"] == "2.0"
+            assert payload["id"] == "req-234"
+            assert payload["result"]["parts"][0]["text"] == "Pong"
+            assert payload["result"]["metadata"]["senderId"] == "agent"
