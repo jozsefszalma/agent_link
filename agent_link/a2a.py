@@ -352,6 +352,27 @@ def create_send_message_request(
     return SendMessageRequest(id=request_id or str(uuid.uuid4()), params=params)
 
 
+def create_send_message_result(
+    message: A2AMessage,
+    *,
+    request_id: Union[str, int],
+) -> A2AEnvelope:
+    """Create a JSON-RPC response envelope for ``message/send`` requests."""
+
+    result_payload = message.to_dict()
+    payload = {
+        "jsonrpc": JSONRPC_VERSION,
+        "id": request_id,
+        "result": result_payload,
+    }
+    return A2AEnvelope(
+        jsonrpc=JSONRPC_VERSION,
+        id=request_id,
+        result=result_payload,
+        raw=payload,
+    )
+
+
 def is_a2a_envelope(payload: Any) -> bool:
     """Return True if the payload looks like an A2A JSON-RPC envelope."""
 

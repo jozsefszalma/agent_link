@@ -19,6 +19,7 @@ from agent_link.a2a import (
     A2AMessage,
     MessageSendConfiguration,
     create_send_message_request,
+    create_send_message_result,
     create_text_message,
     create_text_part,
     derive_sender_id_from_message,
@@ -73,6 +74,17 @@ def test_parse_a2a_envelope_round_trip():
     assert envelope.message is not None
     assert envelope.message.primary_text == "Ping"
     assert derive_sender_id_from_message(envelope.message) == "peer"
+
+
+def test_create_send_message_result_preserves_request_id():
+    message = create_text_message("Pong", role="agent", metadata={"senderId": "agent"})
+    response = create_send_message_result(message, request_id="req-3")
+
+    payload = response.to_dict()
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["id"] == "req-3"
+    assert payload["result"]["messageId"] == message.message_id
+    assert payload["result"]["metadata"]["senderId"] == "agent"
 
 
 def test_derive_sender_id_fallbacks():

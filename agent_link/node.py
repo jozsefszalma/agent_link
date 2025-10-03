@@ -31,6 +31,7 @@ from .a2a import (
     MessageSendConfiguration,
     SendMessageRequest,
     create_send_message_request,
+    create_send_message_result,
     create_text_part,
     derive_sender_id_from_message,
     is_a2a_envelope,
@@ -299,6 +300,16 @@ class AgentNode:
         if text is not None:
             part_list.append(create_text_part(text))
 
+        normalized_message_metadata = None
+        if message_metadata is not None:
+            normalized_message_metadata = dict(message_metadata)
+            if not any(
+                isinstance(normalized_message_metadata.get(key), str)
+                and normalized_message_metadata.get(key)
+                for key in ("senderId", "sender_id")
+            ):
+                normalized_message_metadata.setdefault("senderId", self.agent_id)
+
         if message is None:
             if not part_list:
                 raise ValueError("Either 'message', 'parts', or 'text' must be provided")
@@ -306,7 +317,7 @@ class AgentNode:
                 role=role,
                 parts=part_list,
                 message_id=message_id or str(uuid.uuid4()),
-                metadata=message_metadata,
+                metadata=normalized_message_metadata,
                 extensions=normalized_extensions,
                 reference_task_ids=normalized_reference_ids,
                 task_id=task_id,
@@ -314,8 +325,8 @@ class AgentNode:
             )
         else:
             constructed_message = message
-            if message_metadata:
-                merged_metadata = {**(constructed_message.metadata or {}), **message_metadata}
+            if normalized_message_metadata:
+                merged_metadata = {**(constructed_message.metadata or {}), **normalized_message_metadata}
                 constructed_message = constructed_message.with_updates(metadata=merged_metadata)
             if normalized_extensions is not None:
                 constructed_message = constructed_message.with_updates(extensions=normalized_extensions)
@@ -327,6 +338,8 @@ class AgentNode:
                 constructed_message = constructed_message.with_updates(context_id=context_id)
             if message_id is not None and message_id != constructed_message.message_id:
                 constructed_message = constructed_message.with_updates(message_id=message_id)
+
+        constructed_message = self._ensure_sender_metadata(constructed_message)
 
         request = create_send_message_request(
             constructed_message,
@@ -347,6 +360,18 @@ class AgentNode:
         )
         logger.debug(f"Sent A2A request {request.id} to {topic}")
         return request.id
+
+    def _ensure_sender_metadata(self, message: A2AMessage) -> A2AMessage:
+        """Ensure outgoing A2A messages identify this agent as the sender."""
+
+        metadata = message.metadata or {}
+        for key in ("senderId", "sender_id"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return message
+
+        enriched_metadata = {**metadata, "senderId": self.agent_id}
+        return message.with_updates(metadata=enriched_metadata)
 
     def _handle_message(self, topic: str, payload: Dict[str, Any]) -> None:
         """Handle incoming messages in chat or A2A format."""
@@ -453,13 +478,35 @@ class AgentNode:
                     continue
 
                 if isinstance(response, A2AMessage):
-                    self.send_a2a_request(
-                        message=response,
-                        audience=message.audience,
-                        recipient_id=(
-                            message.sender_id if message.audience == Audience.DIRECT else None
-                        ),
+                    response_message = self._ensure_sender_metadata(response)
+                    target_topic = (
+                        self._group_topic
+                        if message.audience == Audience.EVERYONE
+                        else f"rooms/{self.room_id}/direct/{message.sender_id}"
                     )
+
+                    if (
+                        message.a2a_envelope
+                        and message.a2a_envelope.is_request
+                        and message.a2a_envelope.id is not None
+                    ):
+                        response_envelope = create_send_message_result(
+                            response_message,
+                            request_id=message.a2a_envelope.id,
+                        )
+                        self.client.publish(
+                            topic=target_topic,
+                            payload=response_envelope.to_dict(),
+                            qos=self.qos,
+                        )
+                    else:
+                        self.send_a2a_request(
+                            message=response_message,
+                            audience=message.audience,
+                            recipient_id=(
+                                message.sender_id if message.audience == Audience.DIRECT else None
+                            ),
+                        )
                     continue
 
                 if isinstance(response, dict) and is_a2a_envelope(response):
