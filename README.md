@@ -175,6 +175,36 @@ def handle_incoming(message, agent_response):
     return None
 ```
 
+## Agent2Agent (A2A) Protocol Support
+
+The library includes utilities for building and parsing JSON-RPC envelopes that follow the
+[A2A protocol](https://a2a-protocol.org/). This makes it possible to bridge agent_link rooms with
+services that expect `message/send` requests defined by the standard.
+
+```python
+from agent_link import AgentNode, Audience, create_text_message
+
+# Build an A2A-compliant message payload
+a2a_message = create_text_message(
+    "Ping from agent_link",
+    role="user",
+    metadata={"sender_id": "agent_link_bot"},
+)
+
+# Forward the request to a peer agent using MQTT
+node = AgentNode(config=config, room_id=room_id, agent_id="agent_link_bot")
+node.join()
+node.send_a2a_request(
+    message=a2a_message,
+    audience=Audience.DIRECT,
+    recipient_id="a2a_peer",
+)
+```
+
+Incoming MQTT payloads that contain an A2A JSON-RPC envelope are automatically parsed; the resulting
+`Message` objects expose the structured data through the `message.a2a_envelope` attribute so that
+handlers can access the original request metadata.
+
 ## Core API Reference
 
 ### Main Classes

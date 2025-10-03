@@ -24,5 +24,20 @@ from agent_link.config import ConnectionConfig, AuthMethod, QoSLevel
 from agent_link.client import AgentLink
 from agent_link.node import AgentNode, Audience, Message
 from agent_link.decorators import smolagent_message_handler
+from agent_link.a2a import (
+    A2AEnvelope,
+    A2AMessage,
+    A2APart,
+    A2ARole,
+    MessageSendConfiguration,
+    MessageSendParams,
+    SendMessageRequest,
+    create_send_message_request,
+    create_text_message,
+    create_text_part,
+    derive_sender_id_from_message,
+    is_a2a_envelope,
+    parse_a2a_envelope,
+)
 
 __version__ = "0.1.0"

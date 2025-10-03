@@ -20,6 +20,11 @@ from unittest.mock import patch, MagicMock, call
 
 from agent_link import AgentNode, Audience, Message, ConnectionConfig
 from agent_link.config import QoSLevel
+from agent_link.a2a import (
+    A2AEnvelope,
+    create_send_message_request,
+    create_text_message,
+)
 
 class TestAgentNode:
     def test_init(self, test_config):
@@ -359,3 +364,72 @@ class TestAgentNode:
             
             # Handler should not be called for own messages
             handler.assert_not_called()
+
+    def test_send_a2a_request(self, test_config, mock_agent_link):
+        """Test sending an A2A request"""
+        node = AgentNode(
+            config=test_config,
+            room_id="a2a-room",
+            agent_id="agent-sender",
+        )
+        node._joined = True
+
+        request_id = node.send_a2a_request(
+            text="Hello via A2A",
+            audience=Audience.DIRECT,
+            recipient_id="agent-recipient",
+            message_metadata={"sender_id": "agent-sender"},
+        )
+
+        assert isinstance(request_id, (str, int))
+
+        mock_agent_link.publish.assert_called_once()
+        call_args = mock_agent_link.publish.call_args[1]
+        assert call_args["topic"] == "rooms/a2a-room/direct/agent-recipient"
+        payload = call_args["payload"]
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["method"] == "message/send"
+        assert payload["params"]["message"]["metadata"]["sender_id"] == "agent-sender"
+        assert payload["params"]["message"]["parts"][0]["text"] == "Hello via A2A"
+
+    def test_handle_a2a_message(self, test_config):
+        """Ensure incoming A2A payloads are parsed and passed to handlers."""
+        with patch('agent_link.node.AgentLink'):
+            node = AgentNode(config=test_config, agent_id="agent")
+            handler = MagicMock(return_value=None)
+            node.add_message_handler(handler)
+
+            incoming = create_text_message("Ping", role="user", metadata={"sender_id": "peer"})
+            envelope = create_send_message_request(message=incoming, request_id="req-123")
+
+            topic = f"rooms/{node.room_id}/direct/{node.agent_id}"
+            node._handle_message(topic, envelope.to_dict())
+
+            handler.assert_called_once()
+            message = handler.call_args[0][0]
+            assert isinstance(message.a2a_envelope, A2AEnvelope)
+            assert message.content == "Ping"
+            assert message.sender_id == "peer"
+            assert message.audience == Audience.DIRECT
+
+    def test_handler_returning_a2a_message(self, test_config):
+        """If a handler returns an A2A message, send_a2a_request is used."""
+        with patch('agent_link.node.AgentLink'):
+            node = AgentNode(config=test_config, agent_id="agent")
+            outgoing = create_text_message("Pong", role="agent")
+            node.send_a2a_request = MagicMock()
+
+            handler = MagicMock(return_value=outgoing)
+            node.add_message_handler(handler)
+
+            incoming = create_text_message("Ping", role="user", metadata={"sender_id": "peer"})
+            envelope = create_send_message_request(message=incoming, request_id="req-234")
+
+            topic = f"rooms/{node.room_id}/direct/{node.agent_id}"
+            node._handle_message(topic, envelope.to_dict())
+
+            node.send_a2a_request.assert_called_once()
+            kwargs = node.send_a2a_request.call_args.kwargs
+            assert kwargs["message"] is outgoing
+            assert kwargs["recipient_id"] == "peer"
+            assert kwargs["audience"] == Audience.DIRECT

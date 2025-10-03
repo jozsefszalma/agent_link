@@ -15,15 +15,27 @@
 # Standard imports
 import uuid
 import time
-import json
 import logging
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from dataclasses import dataclass, field
 
 # Package imports
 from .client import AgentLink
 from .config import ConnectionConfig, QoSLevel
+from .a2a import (
+    A2AEnvelope,
+    A2AMessage,
+    A2APart,
+    A2ARole,
+    MessageSendConfiguration,
+    SendMessageRequest,
+    create_send_message_request,
+    create_text_part,
+    derive_sender_id_from_message,
+    is_a2a_envelope,
+    parse_a2a_envelope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +55,8 @@ class Message:
     in_reply_to: Optional[str] = None  # Message ID this is replying to
     audience: Audience = Audience.EVERYONE
     recipient_id: Optional[str] = None  # For direct messages
+    raw_payload: Optional[Any] = None
+    a2a_envelope: Optional[A2AEnvelope] = None
 
 
 class AgentNode:
@@ -158,8 +172,8 @@ class AgentNode:
             return False
         
     def send_message(
-        self, 
-        content: Any, 
+        self,
+        content: Any,
         audience: Audience = Audience.EVERYONE,
         recipient_id: Optional[str] = None,
         in_reply_to: Optional[str] = None
@@ -226,43 +240,248 @@ class AgentNode:
             
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
-            return None        
+            return None
+
+    def send_a2a_request(
+        self,
+        *,
+        text: Optional[str] = None,
+        message: Optional[A2AMessage] = None,
+        parts: Optional[Sequence[A2APart]] = None,
+        role: A2ARole = "user",
+        audience: Audience = Audience.DIRECT,
+        recipient_id: Optional[str] = None,
+        configuration: Optional[MessageSendConfiguration] = None,
+        message_metadata: Optional[Dict[str, Any]] = None,
+        request_metadata: Optional[Dict[str, Any]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        reference_task_ids: Optional[Sequence[str]] = None,
+        task_id: Optional[str] = None,
+        context_id: Optional[str] = None,
+        request_id: Optional[Union[str, int]] = None,
+        message_id: Optional[str] = None,
+    ) -> Union[str, int]:
+        """Send an A2A ``message/send`` JSON-RPC request."""
+
+        if not self._joined:
+            raise ConnectionError("Not joined to a room")
+
+        if audience == Audience.DIRECT and not recipient_id:
+            raise ValueError("Recipient ID required for direct A2A messages")
+
+        if message_metadata is not None and not isinstance(message_metadata, dict):
+            raise ValueError("message_metadata must be a dictionary if provided")
+
+        if request_metadata is not None and not isinstance(request_metadata, dict):
+            raise ValueError("request_metadata must be a dictionary if provided")
+
+        if role not in ("user", "agent"):
+            raise ValueError("role must be either 'user' or 'agent'")
+
+        normalized_extensions = None
+        if extensions is not None:
+            normalized_extensions = list(extensions)
+            if not all(isinstance(item, str) for item in normalized_extensions):
+                raise ValueError("All extension identifiers must be strings")
+
+        normalized_reference_ids = None
+        if reference_task_ids is not None:
+            normalized_reference_ids = list(reference_task_ids)
+            if not all(isinstance(item, str) for item in normalized_reference_ids):
+                raise ValueError("All reference task identifiers must be strings")
+
+        part_list: List[A2APart] = []
+        if parts is not None:
+            part_list = list(parts)
+            if not all(isinstance(part, A2APart) for part in part_list):
+                raise ValueError("All parts must be instances of A2APart")
+
+        if text is not None:
+            part_list.append(create_text_part(text))
+
+        if message is None:
+            if not part_list:
+                raise ValueError("Either 'message', 'parts', or 'text' must be provided")
+            constructed_message = A2AMessage(
+                role=role,
+                parts=part_list,
+                message_id=message_id or str(uuid.uuid4()),
+                metadata=message_metadata,
+                extensions=normalized_extensions,
+                reference_task_ids=normalized_reference_ids,
+                task_id=task_id,
+                context_id=context_id,
+            )
+        else:
+            constructed_message = message
+            if message_metadata:
+                merged_metadata = {**(constructed_message.metadata or {}), **message_metadata}
+                constructed_message = constructed_message.with_updates(metadata=merged_metadata)
+            if normalized_extensions is not None:
+                constructed_message = constructed_message.with_updates(extensions=normalized_extensions)
+            if normalized_reference_ids is not None:
+                constructed_message = constructed_message.with_updates(reference_task_ids=normalized_reference_ids)
+            if task_id is not None:
+                constructed_message = constructed_message.with_updates(task_id=task_id)
+            if context_id is not None:
+                constructed_message = constructed_message.with_updates(context_id=context_id)
+            if message_id is not None and message_id != constructed_message.message_id:
+                constructed_message = constructed_message.with_updates(message_id=message_id)
+
+        request = create_send_message_request(
+            constructed_message,
+            request_id=request_id,
+            configuration=configuration,
+            metadata=request_metadata,
+        )
+
+        if audience == Audience.EVERYONE:
+            topic = self._group_topic
+        else:
+            topic = f"rooms/{self.room_id}/direct/{recipient_id}"
+
+        self.client.publish(
+            topic=topic,
+            payload=request.to_dict(),
+            qos=self.qos,
+        )
+        logger.debug(f"Sent A2A request {request.id} to {topic}")
+        return request.id
 
     def _handle_message(self, topic: str, payload: Dict[str, Any]) -> None:
-        """Handle incoming direct messages in chat mode."""
-        try:
-            sender_id = payload["sender_id"]
-            # Skip our own messages
+        """Handle incoming messages in chat or A2A format."""
+
+        if not isinstance(payload, dict):
+            logger.warning(f"Ignoring non-dict payload on {topic}")
+            return
+
+        is_direct_topic = topic.startswith(f"rooms/{self.room_id}/direct/")
+        audience_value = payload.get("audience")
+        if isinstance(audience_value, str):
+            try:
+                audience = Audience(audience_value)
+            except ValueError:
+                audience = Audience.DIRECT if is_direct_topic else Audience.EVERYONE
+        else:
+            audience = Audience.DIRECT if is_direct_topic else Audience.EVERYONE
+
+        recipient_id = payload.get("recipient_id") if audience == Audience.DIRECT else None
+        if audience == Audience.DIRECT and recipient_id is None:
+            recipient_id = self.agent_id
+
+        timestamp = payload.get("timestamp", time.time())
+        a2a_envelope = parse_a2a_envelope(payload)
+        message: Optional[Message] = None
+
+        if a2a_envelope and a2a_envelope.message:
+            message_obj = a2a_envelope.message
+            sender_id = derive_sender_id_from_message(message_obj)
             if sender_id == self.agent_id:
                 return
-               
+
+            content = message_obj.primary_text or message_obj.to_dict()
+            in_reply_to = None
+            metadata = message_obj.metadata or {}
+            for key in ("in_reply_to", "inReplyTo", "reply_to", "replyTo"):
+                value = metadata.get(key)
+                if isinstance(value, str):
+                    in_reply_to = value
+                    break
+
             message = Message(
                 sender_id=sender_id,
-                content=payload["content"],
-                timestamp=payload["timestamp"],
-                message_id=payload["message_id"],
-                in_reply_to=payload.get("in_reply_to"),
-                audience = Audience(payload.get("audience", "direct")),
-                recipient_id=self.agent_id,
+                content=content,
+                timestamp=timestamp,
+                message_id=message_obj.message_id,
+                in_reply_to=in_reply_to,
+                audience=audience,
+                recipient_id=recipient_id,
+                raw_payload=payload,
+                a2a_envelope=a2a_envelope,
             )
-            
-            logger.info(f"Received message from {message.sender_id}: {str(message.content)[:50]}...")
-            
+        else:
+            try:
+                sender_id = payload["sender_id"]
+                if sender_id == self.agent_id:
+                    return
 
-            # Process through all handlers
-            for handler in self._message_handlers:
-                try:
-                    response = handler(message)
-                    if response is not None:
-                        # Send response
-                        self.send_message(
-                            content=response,
-                            audience=message.audience,
-                            recipient_id=message.sender_id if message.audience == Audience.DIRECT else None,
-                            in_reply_to=message.message_id
-                        )
-                except Exception as e:
-                    logger.error(f"Error in message handler: {e}")
-            
-        except KeyError as e:
-            logger.warning(f"Malformed message received: {e}")        
+                message_id = (
+                    payload.get("message_id")
+                    or payload.get("messageId")
+                    or str(uuid.uuid4())
+                )
+                content = payload["content"]
+            except KeyError as exc:
+                logger.warning(f"Malformed message received: {exc}")
+                return
+
+            message = Message(
+                sender_id=sender_id,
+                content=content,
+                timestamp=timestamp,
+                message_id=message_id,
+                in_reply_to=payload.get("in_reply_to") or payload.get("inReplyTo"),
+                audience=audience,
+                recipient_id=recipient_id,
+                raw_payload=payload,
+            )
+
+        logger.info(
+            "Received message from %s: %s...",
+            message.sender_id,
+            str(message.content)[:50],
+        )
+
+        for handler in self._message_handlers:
+            try:
+                response = handler(message)
+                if response is None:
+                    continue
+
+                if isinstance(response, SendMessageRequest):
+                    response_payload = response.to_dict()
+                    target_topic = (
+                        self._group_topic
+                        if message.audience == Audience.EVERYONE
+                        else f"rooms/{self.room_id}/direct/{message.sender_id}"
+                    )
+                    self.client.publish(
+                        topic=target_topic,
+                        payload=response_payload,
+                        qos=self.qos,
+                    )
+                    continue
+
+                if isinstance(response, A2AMessage):
+                    self.send_a2a_request(
+                        message=response,
+                        audience=message.audience,
+                        recipient_id=(
+                            message.sender_id if message.audience == Audience.DIRECT else None
+                        ),
+                    )
+                    continue
+
+                if isinstance(response, dict) and is_a2a_envelope(response):
+                    target_topic = (
+                        self._group_topic
+                        if message.audience == Audience.EVERYONE
+                        else f"rooms/{self.room_id}/direct/{message.sender_id}"
+                    )
+                    self.client.publish(
+                        topic=target_topic,
+                        payload=response,
+                        qos=self.qos,
+                    )
+                    continue
+
+                self.send_message(
+                    content=response,
+                    audience=message.audience,
+                    recipient_id=(
+                        message.sender_id if message.audience == Audience.DIRECT else None
+                    ),
+                    in_reply_to=message.message_id,
+                )
+            except Exception as exc:  # pragma: no cover - handler safety net
+                logger.error(f"Error in message handler: {exc}")
