@@ -1,3 +1,5 @@
+NOTE: I'm archiving this repo as there is no interest for such comms protocol and the agents are happy to communicate over e.g. Slack or WhatsApp as well.
+
 # agent_link
 a Python Library for Distributed AI Agent Communications   
 
